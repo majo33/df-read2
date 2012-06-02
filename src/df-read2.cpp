@@ -77,11 +77,15 @@ void unpack_df(ifstream &input)
   }
 }
 
-typedef struct ih_context {ubyte *buf; size_t size, used;} ih_context;
+typedef struct IHContext {
+  ubyte *buf;
+  size_t size;
+  size_t used;
+} ih_context;
 
 static long inflate_callback(char *into, long requested, void *v)
 {
-  ih_context *c = reinterpret_cast<ih_context *>(v);
+  ih_context *c = reinterpret_cast<IHContext *>(v);
   size_t to_read = requested;
 
   if (c->size == c->used) return 0;
@@ -112,7 +116,7 @@ void extract_file(const string &filename, size_t offset, size_t size, ifstream &
 
   if (buffer[0] == 0xEC) { // extract data
     vector<char> output_buffer(size);
-    ih_context c = (ih_context){buffer.data(), size, 0};
+    ih_context c = IHContext{ buffer.data(), size, 0 };
     InflateHandler ih = open_inflate_handler(inflate_callback, &c);
     long decompressed_bytes;
 
