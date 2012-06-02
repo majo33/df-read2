@@ -1,0 +1,5 @@
+Tested on Linux.
+
+Compiling df-read2:
+  cmake .
+  make
