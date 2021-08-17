@@ -1,13 +1,16 @@
-//DF-READ2 extractor
-//based on the http://astrange.ithinksw.net/ico/df-read.c
-//read DFDATAS/data.df from ICO
-//wildly untested
-//require little endian pc, or create method to convert numbers from big endian to little endian
+// DF-READ2 Ico game data extractor
+// Based on the http://astrange.ithinksw.net/ico/
+//              http://astrange.ithinksw.net/ico/df-read.c
+// read DFDATAS/data.df from ICO
+// require little endian PC because the ICO game data are stored in little endian format
 
-#include <boost/filesystem.hpp>
+#include <cstdint>
+#include <cassert>
+#include <cstring>
 #include <fstream>
 #include <vector>
-#include <cstdint>
+#include <iostream>
+#include <filesystem>
 
 extern "C" {
 #include "zip.h"
@@ -15,7 +18,7 @@ extern "C" {
 typedef unsigned char ubyte;
 
 using namespace std;
-namespace filesystem = boost::filesystem;
+namespace filesystem = std::filesystem;
 
 struct RootFileInfo {
   char filename[32];
@@ -47,7 +50,7 @@ typedef struct DfFileInfo {
 
 static_assert(sizeof(DfFileInfo) == 0x224, "");
 
-void unpack_df(ifstream &input)
+void unpack_df(ifstream &input, const string &dst_dir)
 {
   DfHeader header;
   // read header
@@ -60,7 +63,9 @@ void unpack_df(ifstream &input)
   for (const DfFileInfo &info : file_table) {
     cout << "Unpacking file " << info.filename << endl;
     filesystem::path filename(info.filename);
-    filesystem::path directory = filename.parent_path();
+    filesystem::path dst_filename(dst_dir);
+    dst_filename /= filename;
+    filesystem::path directory = dst_filename.parent_path();
 
     buffer.resize(info.size);
     input.seekg(info.offset, ios_base::beg);
@@ -72,7 +77,7 @@ void unpack_df(ifstream &input)
       return;
     }
 
-    ofstream output(filename.c_str());
+    ofstream output(dst_filename.string().c_str(), ios_base::out | ios_base::binary | ios_base::ate);
     output.write(buffer.data(), buffer.size());
   }
 }
@@ -98,7 +103,7 @@ static long inflate_callback(char *into, long requested, void *v)
   return to_read;
 }
 
-void extract_file(const string &filename, size_t offset, size_t size, ifstream &file)
+void extract_file(const string &filename, size_t offset, size_t size, ifstream &file, const std::string &dst_dir)
 {
   assert(!filename.empty());
   assert(offset > 0);
@@ -107,12 +112,28 @@ void extract_file(const string &filename, size_t offset, size_t size, ifstream &
 
   vector<uint8_t> buffer(size);
   // seek&read
-  if (!file.seekg(offset, ios_base::beg) || !file.read(reinterpret_cast<char *>(buffer.data()), buffer.size())) {
-    cerr << "Corrupted file!" << endl;
+  if (!file.seekg(offset, ios_base::beg)) {
+    cerr << "Can't extract " << filename << "!" << endl;
+    file.clear(); // clear error flag
     return;
   }
+ 
+ 
+  if (!file.read(reinterpret_cast<char *>(buffer.data()), buffer.size())) {
+    cerr << "Error while extracting " << filename << ", extracted file is incomplete!" << endl;
+    streamsize bytes_read = file.gcount();
+    file.clear(); // clear error flag
 
-  ofstream output(filename, ios_base::binary | ios_base::out | ios_base::ate);
+    if (bytes_read > 0)
+      buffer.resize(file.gcount());
+    else
+      return;
+  }
+  cout << "Wanted " << buffer.size() << " got " << file.gcount() << endl;
+
+  filesystem::path dst_path(dst_dir);
+  dst_path /= filename;
+  ofstream output(dst_path.string().c_str(), ios_base::binary | ios_base::out | ios_base::ate);
 
   if (buffer[0] == 0xEC) { // extract data
     vector<char> output_buffer(size);
@@ -132,7 +153,7 @@ void extract_file(const string &filename, size_t offset, size_t size, ifstream &
   }
 }
 
-void unpack_datafile(ifstream &input)
+void unpack_datafile(ifstream &input, const string &dst_dir)
 {
   uint32_t file_count;
 
@@ -150,17 +171,20 @@ void unpack_datafile(ifstream &input)
   input.read(reinterpret_cast<char *>(file_table.data()), file_table.size() * sizeof(RootFileInfo));
 
   for (const RootFileInfo &info : file_table) {
-    extract_file(info.filename, info.offset, info.size, input);
-    filesystem::path filepath(info.filename);
+    //cout << "Filename " << info.filename << " offset " << info.offset << " size " << info.size << endl;
+    
+    extract_file(info.filename, info.offset, info.size, input, dst_dir);
+    filesystem::path dst_filename(dst_dir);
+    dst_filename /= info.filename;
     // extract files whith DF extension
-    if (filepath.extension() == ".DF") { // extract DF archive
-      ifstream df_input(info.filename);
+    if (dst_filename.extension() == ".DF") { // extract DF archive
+      ifstream df_input(dst_filename.string().c_str(), ios_base::in | ios_base::binary);
 
       if (!df_input) {
         cerr << "Can't open " << info.filename << endl;
         return;
       }
-      unpack_df(df_input);
+      unpack_df(df_input, dst_dir);
     }
   }
 }
@@ -179,6 +203,11 @@ int main(int argc, char *argv[])
     return -1;
   }
 
-  unpack_datafile(input);
+  string dst_dir("data/");
+
+  // ensure that destination directory exists
+  filesystem::create_directories(filesystem::path(dst_dir));
+
+  unpack_datafile(input, dst_dir);
 	return 0;
 }
